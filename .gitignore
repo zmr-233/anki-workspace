@@ -1,0 +1,11 @@
+# 明文凭据 —— 绝不入库。里面是 AnkiWeb 测试账号的账号/密码。
+# 如果哪天不小心提交了，改密码，不要只指望 filter-repo。
+env.secret
+
+# 会话草稿：session id、临时 prompt、截图
+TEMP/
+
+# 编辑器 / OS
+.DS_Store
+*.swp
+*~

@@ -1,0 +1,6 @@
+[submodule "02-AnkiDroid-Dev"]
+	path = 02-AnkiDroid-Dev
+	url = https://github.com/zmr-233/ankidroid-dev.git
+[submodule "03-Anki-Android-Backend-Dev"]
+	path = 03-Anki-Android-Backend-Dev
+	url = https://github.com/zmr-233/ankidroid-backend-dev.git
