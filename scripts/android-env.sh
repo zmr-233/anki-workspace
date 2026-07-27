@@ -3,10 +3,8 @@
 #
 #   . /home/zmr233/01_Projects/15_Tools/12-Anki-Workspace/scripts/android-env.sh
 #
-# Runs fine in the CC/penv shell — as of 2026-07-27 the bind mount that used to
-# force everything through `ssh local` is gone (anki/ is a real directory now,
-# see docs/claude/01-android-device-debugging.md §1). Only `adb` still needs
-# `ssh local`, because /dev/bus/usb is ACL'd to zmr233.
+# Every build here runs in the local shell. Only `adb` needs `ssh local`,
+# because /dev/bus/usb is ACL'd to zmr233 — see CLAUDE.md.
 
 export WORKSPACE=/home/zmr233/01_Projects/15_Tools/12-Anki-Workspace
 
