@@ -130,12 +130,13 @@ GITHUB_TOKEN 创建的 release **不会触发其他 workflow**（GitHub 的防�
 
 ### 3.1 立即待办
 
-流水线已全线验证通过（细节见 3.3），没有阻塞项。剩下的是决定：
+**v26.05.2 已发布**，整条流水线端到端跑通，无阻塞项。剩下的只有一件要你做的：
 
 | 项 | 说明 |
 |---|---|
-| 真发版：`git tag v26.05.2 && git push origin v26.05.2` | 会同时更新 AUR 到 26.05.2 并发出第一个 APK |
-| Obtainium 订阅 `https://github.com/zmr-233/anki-workspace` | 首次发版之后 |
+| Obtainium 订阅 `https://github.com/zmr-233/anki-workspace` | 资产名 `AnkiPlus-<版本>-arm64-v8a.apk`；tag 与 APK 的 versionName 相同，所以版本检测不会误报更新 |
+
+以后发版就是 `git tag vX.YY.Z && git push origin vX.YY.Z`，约 26 分钟后 AUR 和 release 都更新完。
 
 ### 3.2 密钥布置
 
@@ -171,14 +172,22 @@ desktop 与 backend 并行；`publish-aur.yml` = run 30280991792）：
 | rsdroid AAR | ✅ `AAR jniLibs: arm64-v8a` 断言通过 | 13m31s |
 | APK | ✅ `com.ichi2.anki.plus` / `326050200` / `26.05.2` / `Anki+` / 仅 arm64 | 11m16s |
 | 重签 | ✅ 成品已下载核对：`CN=zmr-233, OU=anki-plus`，SHA-256 与 keystore 一致 | 5s |
-| 发 release | ❌ dry run 不跑（只在本机用 `gh` 桩验过） | — |
-| publish-aur（独立跑） | ✅ 幂等保护生效：CI 重新生成的 PKGBUILD 与手工推的逐字节相同，输出「AUR 上已经是这个版本，无需推送」，AUR 仍停在 `1ac27d0` | 40s |
+| 发 release | ✅ | — |
+| 推 AUR | ✅ | — |
 
 磁盘没成为问题：各 job 先删 dotnet / ghc / boost / swift，desktop 还删预装的
 Android SDK；`03` 侧靠 `SKIP_ROBOLECTRIC=1` 省掉宿主机那份 target。
 
-**唯一还没在 runner 上跑过的是 `publish` job**，它要真发版才会第一次执行。
-脚本很短（拼 notes + 一次 `gh release create`），本机用 `gh` 桩验过参数。
+**v26.05.2（run 30286757191）是第一次由 `push: tags` 触发的完整发版，全绿。**
+在那之前 dry run 都走 `workflow_dispatch`，所以 `meta` 的 tag 推导分支、`publish`、
+`aur` 三处都是那次首跑，一次通过。
+
+发布产物已下载核对：APK 是 `com.ichi2.anki.plus` / `326050200` / `26.05.2`、
+签名者 `CN=zmr-233, OU=anki-plus`、含 zh-CN、`grep classes*.dex` 里上游 ACRA 端点命中 0；
+tarball 的 sha256 与 AUR PKGBUILD 里写的**逐字一致**，即 AUR 指向的正是该 release 的产物。
+
+`publish-aur.yml` 单独跑过一次幂等验证（run 30280991792）：CI 在容器里重新生成的
+PKGBUILD 与手工推的逐字节相同，脚本输出「AUR 上已经是这个版本，无需推送」并退出。
 
 ### 一路踩出来的四个坑
 
