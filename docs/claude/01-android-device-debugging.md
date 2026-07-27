@@ -45,12 +45,25 @@ penv 侧跑 adb 会抢占 5037 端口。若已污染：
 ⚠️ **`ssh local` 每次都从 `$HOME` 开始**，命令里必须显式 `cd`，否则会出现
 `fatal: cannot change to 'anki'` 这类看起来像环境坏掉的假象。
 
-### 1.2 移动之后的一次性代价
+### 1.2 移动的代价比预想小得多（已实测）
 
-`out/build.ninja:3` 的 `builddir=` 和 **1074 个 cargo fingerprint** 里烧的是旧绝对路径，
-所以**首次构建会大量重建**。不受影响的（相对路径，免费幸存）：
-`anki/out/node_modules`、`anki/out/extracted/protoc`、`.cargo/config.toml` 里所有
-`relative = true` 的条目。**不要**为此删 `out/` —— 那会连 yarn 和下载的 protoc 一起丢掉。
+迁移前的担心是「`out/build.ninja` 和 1074 个 cargo fingerprint 里烧了旧绝对路径 →
+全量重建」。**实测基本没发生**，原因有两条，都值得记住：
+
+| 层 | 为什么没失效 |
+|---|---|
+| ninja | `out/build.ninja:3` 至今写着 `builddir = …/01-Anki-Dev/out`，而 `01-Anki-Dev`
+现在正是指向物理目录的 symlink，**旧路径原地解析得通**。ninja 层完全没动 |
+| 03 的 cargo target | 移动**前**后端看到的就是 `03-…/anki/rslib` —— bind mount 报告的是挂载点路径、
+不是源路径。移动后路径**字面相同**，fingerprint 全部命中 |
+| anki 自己的 cargo | 唯一真受影响的一层。移动后首建重编约 90 个 crate，
+其中还包含从零安装 `cargo-license` 和 `cargo-deny` 两个工具 |
+
+实测耗时（第二次跑，即增量状态）：`just check` **40 秒**，
+`ANDROID_ARCHS=arm64-v8a ./build.sh` **51 秒**。
+
+**不要**为了"清理路径"去删 `out/` —— 那会连 yarn 装好的 `node_modules` 和下载的 protoc
+一起丢掉，代价远大于收益。
 
 ---
 

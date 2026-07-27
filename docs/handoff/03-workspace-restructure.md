@@ -1,8 +1,8 @@
 # Handoff 03 — 工作区重构：bind mount 已删除，全部改动已提交
 
 **日期**：2026-07-27
-**本 session 完成**：环境重构（消灭 bind mount）→ 三仓库提交 → workspace 仓库初始化
-**状态**：**三个仓库全部干净且已提交；均未 push；CI 尚未开工**
+**本 session 完成**：环境重构（消灭 bind mount）→ 四仓库提交与 push → workspace 仓库初始化 → 完整构建验证
+**状态**：**四个仓库全部干净、已提交、已 push；完整构建已验证通过；CI 尚未开工**
 
 - 上一份交接：`docs/handoff/02-timezone-followups.md`（§3.3 功能待办仍有效）
 - 操作细节见 `docs/claude/01-android-device-debugging.md`（**§1 已重写**）
@@ -39,41 +39,50 @@
 
 | 检查 | 结果 |
 |---|---|
-| `git -C 03 submodule status` | ✅ `e10ce15… anki (heads/main)`，不再报 symlink 错 |
+| `git -C 03 submodule status` | ✅ 正常解析成 `anki (heads/main)`，不再报 symlink 错 |
 | anki 自身 4 个 submodule | ✅ `.git` 指针是相对路径，移动后完好 |
 | `cargo metadata`（penv shell） | ✅ `anki` / `anki_proto` / `anki_io` 全部解析到新路径 |
 | `./gradlew :rsdroid:tasks`（penv shell） | ✅ 配置阶段打印 `Anki commit: …`，即 `cargo metadata` 读 `anki/Cargo.toml` 成功 |
 | `anki/out/*` 产物 + `.cargo/config.toml` 相对路径 | ✅ 原样存活 |
 
-### 1.4 ⚠️ 尚未做的验证：一次完整构建
-
-**只验证到配置/解析阶段，没有真正编译过。**
-`out/build.ninja:3` 的 `builddir=` 和 **1074 个 cargo fingerprint** 里烧的是旧绝对路径，
-所以下一次构建会大量重建（预计 rslib 全量 + ninja 部分）。这是移动的一次性代价，
-**不要**为此删 `out/` —— 会连 yarn 和下载的 protoc 一起丢掉。
-
-下一个 session 的第一件事应该是：
+### 1.4 完整构建已验证 ✅
 
 ```bash
 . scripts/android-env.sh
-cd 01-Anki-Dev && just check                      # 顺带确认 minilints（见 §3）
-cd ../03-Anki-Android-Backend-Dev && ANDROID_ARCHS=arm64-v8a ./build.sh
+cd 01-Anki-Dev && just check                                  # ✅ 40s
+cd ../03-Anki-Android-Backend-Dev && ANDROID_ARCHS=arm64-v8a ./build.sh   # ✅ 51s
 ```
+
+产物核对：`rsdroid-release.aar` 19 MB，内含且**仅含**
+`jni/arm64-v8a/librsdroid.so`（43.5 MB，ELF aarch64，NDK r29 构建）；
+生成的 `anki/config/Preferences.java` + `PreferencesKt.kt` 含新的时区字段；
+protobuf 版本地雷复检（`throwCannotGetNumberOfUnrecognized`）为 **0**。
+
+`just check` 的成绩：Rust ✅、Python **82 passed + 2 skipped**、TS **51 passed**、
+minilints ✅。
+
+**迁移代价比预想小得多**，原因见调试手册 §1.2：ninja 的 `builddir` 走 symlink 仍解析、
+03 的 cargo target 因为 bind mount 本来报告的就是挂载点路径而字面不变，
+只有 anki 自己那层重编了约 90 个 crate。
 
 ---
 
-## 2. 提交状态：全部已提交，**均未 push**
+## 2. 提交状态：全部已提交并已 push ✅
 
-| 仓库 | HEAD | commit 数 |
+| 仓库 | remote | HEAD |
 |---|---|---|
-| `03-.../anki`（原 01） | `a8fc57973 feat(scheduler): pin scheduling timezone…` | 1 |
-| `02-AnkiDroid-Dev` | `372ecbc feat(preferences): expose scheduling timezone…` | 3（fix / build / feat） |
-| `03-Anki-Android-Backend-Dev` | `5ea5bd0 build(deps): track the zmr-233/anki-dev fork…` | 2（build / build-deps） |
-| workspace（新） | `23eaf18 chore: initialise the workspace repo` | 1 |
+| `03-.../anki`（原 01） | `zmr-233/anki-dev` | `baf44f633` |
+| `02-AnkiDroid-Dev` | `zmr-233/ankidroid-dev` | `372ecbc` |
+| `03-Anki-Android-Backend-Dev` | `zmr-233/ankidroid-backend-dev` | `049948a` |
+| workspace（新） | `zmr-233/anki-workspace` | `6db66d2` |
 
-⚠️ **所有 gitlink 指向的都是只存在于本地的 commit。** 在 push 之前，
-`git clone --recurse-submodules` 和任何 CI 都会失败。push 顺序必须自底向上：
-**anki → 03 → 02 → workspace**。
+push 顺序是自底向上（anki → 03 → 02 → workspace），否则 gitlink 会悬空。
+推完逐层核对过 `git ls-remote`，三层 gitlink 都与远端 `main` 一致 ——
+`git clone --recurse-submodules` 和将来的 CI 都能解析。
+
+**URL 协议是分离的**：`.gitmodules` 里是 `https://`（给 CI 匿名克隆），
+本地 `.git/config` 用 `git config submodule.<name>.url git@github.com:…` 覆盖成 ssh。
+嵌套那层（`03/.git/config` 的 `anki`）也已设 —— 它原先还指着已不存在的 `01-Anki-Dev` 路径。
 
 AnkiDroid 的 `AI_POLICY.md` 要求 commit 带 `Assisted-by:` trailer，02 的三个 commit 已遵守。
 
@@ -95,19 +104,33 @@ all_contributors = git log --pretty=%ae CONTRIBUTORS    // 「改过 CONTRIBUTOR
 
 现在 HEAD 是你的 commit，所以报错会变成 `zmr_233@outlook.com NOT found in list`。
 
-**解法（需要你决定）**：提一个动 `CONTRIBUTORS` 的 commit，把自己加进去，此后所有
-commit 自动通过。**本 session 没有代做**，因为该文件开头写明：
+**已解决**：`cbd4ea0b0 chore: add zmr233 to CONTRIBUTORS` 已提交并推送。
+用户明确同意该文件开头的 BSD-3 声明（"By adding your name to this file, you assert
+that any code you contribute to the Anki project is licensed under the BSD 3 clause
+license."）。此后所有 commit 自动通过 `check_contributors`，本轮 `just check` 已实证。
 
-> By adding your name to this file, you assert that any code you contribute to
-> the Anki project is licensed under the BSD 3 clause license.
+### 3.1 被它盖住的第二处 minilints 失败 ⚠️
 
-这是一份法律声明，得你自己签。提 upstream PR 本来也必须做这一步。
+contributors 修好之后，`just check` **仍然红**，露出了原先被挡住的第二处：
 
-临时绕过（只为让 `just check` 变绿，不能替代上面那步）：
+```
+cargo/licenses.json is out of date; run ./ninja fix:minilints
+```
+
+时区功能往 `Cargo.toml` 加了 `chrono-tz`，但没重新生成许可证清单。
+交接 02 说的"仅 minilints 失败"其实是**两处**失败，前一处把后一处盖住了。
+
+修法（CLAUDE.md 要求走 just，别直接调 `./ninja`）：
 
 ```bash
-CONTRIBUTORS_BYPASS_EMAILS=zmr_233@outlook.com just check
+just fix-minilints      # 会自动装 cargo-deny，首次约 100s
 ```
+
+结果：`cargo/licenses.json` 新增 `chrono-tz` + `phf` + `phf_shared` 三项，
+`cargo-deny` 报 `advisories ok, bans ok, licenses ok, sources ok`。
+已提交为 `baf44f633`。
+
+**教训**：以后凡是动 `Cargo.toml` 的依赖，记得跟一次 `just fix-minilints`。
 
 ---
 
@@ -119,20 +142,16 @@ submodule —— **指向 anki 的 gitlink 只有一处**，不可能不一致�
 已 gitignore：`env.secret`（AnkiWeb 明文账密）、`TEMP/`。
 **`env.secret` 从第一个 commit 起就不在库里**，无需洗历史。
 
-尚无 remote。
+remote：`git@github.com:zmr-233/anki-workspace.git`。
 
 ---
 
 ## 5. 待办
 
-### 5.1 本轮遗留（按优先级）
+### 5.1 本轮遗留
 
-| 项 | 说明 |
-|---|---|
-| **跑一次完整构建** | §1.4。重构后唯一没验证的环节 |
-| **push 四个仓库** | §2。自底向上，否则 gitlink 悬空 |
-| **`CONTRIBUTORS`** | §3。需要你签 |
-| workspace 建 GitHub remote | 名字待定 |
+**没有。** 环境重构、四仓库提交与 push、CONTRIBUTORS、完整构建验证都已完成。
+下一轮从 §5.2（CI）或 §5.4（功能）开工皆可。
 
 ### 5.2 CI（本轮明确不做）
 
