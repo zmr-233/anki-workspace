@@ -153,9 +153,13 @@ jobs:
                 03-Anki-Android-Backend-Dev/gradle/libs.versions.toml)
           [[ -n $ndk ]] || { echo "::error::libs.versions.toml 里读不到 ndk"; exit 1; }
           echo "NDK $ndk"
-          # yes | 不能省：许可没预先接受时 sdkmanager 会停在 "Accept? (y/N)" 等输入，
-          # 而 CI 没有 tty，那就是一个跑到 job 超时的静默挂死
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk"
+          # 许可没预先接受时 sdkmanager 会停在 "Accept? (y/N)" 等输入，而 CI 没有 tty，
+          # 那就是一个跑到 job 超时的静默挂死。所以要喂输入。
+          #
+          # 但不能写成 `yes | sdkmanager`：sdkmanager 不读就退出时 yes 吃到 EPIPE，
+          # pipefail 会把整步判成失败（实测踩过）。here-string 是有界输入，
+          # 既不挂死也不会 broken pipe，而且退出码就是 sdkmanager 自己的。
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk" <<< y
 
       - name: 构建 AAR
         working-directory: 03-Anki-Android-Backend-Dev
