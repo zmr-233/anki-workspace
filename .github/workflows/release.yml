@@ -281,12 +281,19 @@ jobs:
           # --- 自检：下面任一条不符就不该发出去 ---
           "$bt/zipalign" -c -P 16 4 "$out"
 
-          # 1. 必须是那把 key 签的。secret 被换掉会在这里断，而不是等用户装不上。
+          # 1. 必须是那把 key 签的，且只有它一个签名者。secret 被换掉会在这里断，
+          #    而不是等用户装不上。
+          #
+          #    行首不能锚死：build-tools 36 打印 "Signer #1 certificate SHA-256
+          #    digest: …"，37 改成了 "V3.0 Signer: certificate SHA-256 digest: …"，
+          #    而上面取的是镜像里最新的那个版本，会随镜像漂。
           expect_sha=5ef6ab435473485c77e87cbee6b60300ba328096a35aabe380bdade088cb533d
-          got_sha=$("$bt/apksigner" verify --print-certs "$out" |
-                    sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
-          [[ $got_sha == "$expect_sha" ]] || {
-              echo "::error::签名证书不对。期望 $expect_sha，实得 '$got_sha'"; exit 1; }
+          mapfile -t certs < <("$bt/apksigner" verify --print-certs "$out" |
+                               sed -n 's/.*certificate SHA-256 digest: *//p' | sort -u)
+          [[ ${#certs[@]} -eq 1 ]] || {
+              echo "::error::期望恰好一个签名证书，实得 ${#certs[@]} 个: ${certs[*]}"; exit 1; }
+          [[ ${certs[0]} == "$expect_sha" ]] || {
+              echo "::error::签名证书不对。期望 $expect_sha，实得 '${certs[0]}'"; exit 1; }
 
           badging=$("$bt/aapt2" dump badging "$out")
           # 2. applicationId 必须带 .plus。万一 -PcustomSuffix 掉了，这个包会冒充
