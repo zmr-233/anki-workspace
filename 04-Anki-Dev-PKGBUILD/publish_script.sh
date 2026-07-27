@@ -20,8 +20,14 @@ fi
 
 [[ -f PKGBUILD ]] || { echo "没有 PKGBUILD，先跑 prepare.py" >&2; exit 1; }
 
-# .SRCINFO 必须由 PKGBUILD 生成，AUR 靠它建索引；手写必然会漂
-makepkg --printsrcinfo > .SRCINFO
+# .SRCINFO 必须由 PKGBUILD 生成，AUR 靠它建索引；手写必然会漂。
+# CI 里容器是 root，而 makepkg 拒绝以 root 运行，所以那边先用普通用户生成好
+# 再置 SKIP_SRCINFO=1 跳过这里。
+if [[ ${SKIP_SRCINFO:-0} == 1 ]]; then
+    [[ -f .SRCINFO ]] || { echo "SKIP_SRCINFO=1 但没有 .SRCINFO" >&2; exit 1; }
+else
+    makepkg --printsrcinfo > .SRCINFO
+fi
 
 [[ -d aur ]] || git clone "$AUR_REMOTE" aur
 
