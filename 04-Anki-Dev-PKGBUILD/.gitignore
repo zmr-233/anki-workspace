@@ -1,0 +1,20 @@
+# 白名单：默认忽略一切，只放行本仓库真正拥有的文件
+*
+*/
+
+!.gitignore
+!README.md
+!pre-PKGBUILD
+!PKGBUILD
+!.SRCINFO
+!prepare.py
+!publish_script.sh
+!tools/
+!tools/*.sh
+
+# makepkg 的产物与 AUR 工作副本
+pkg/
+src/
+aur/
+*.pkg.tar.zst
+*.tar.zst

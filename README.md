@@ -9,10 +9,13 @@
 12-Anki-Workspace/                      ← 本仓库
 ├── 01-Anki-Dev -> 03-Anki-Android-Backend-Dev/anki    symlink
 ├── 02-AnkiDroid-Dev/                                  submodule → zmr-233/ankidroid-dev
-└── 03-Anki-Android-Backend-Dev/                       submodule → zmr-233/ankidroid-backend-dev
-    └── anki/                                          submodule → zmr-233/anki-dev
-        └── ftl/core-repo, qt/installer/*-template …   上游自带的 4 个 submodule
+├── 03-Anki-Android-Backend-Dev/                       submodule → zmr-233/ankidroid-backend-dev
+│   └── anki/                                          submodule → zmr-233/anki-dev
+│       └── ftl/core-repo, qt/installer/*-template …   上游自带的 4 个 submodule
+└── 04-Anki-Dev-PKGBUILD/                              普通目录，AUR 包 anki-plus-bin
 ```
+
+`04` 不是 submodule：release 本来就挂在本仓库上，单开一个仓库只会多一层推送顺序约束。
 
 ```bash
 git clone --recurse-submodules git@github.com:zmr-233/anki-workspace.git
@@ -41,6 +44,17 @@ cd 02-AnkiDroid-Dev                && ./gradlew :AnkiDroid:assembleDebug
 
 发版需 `ANDROID_ARCHS=armeabi-v7a,x86,arm64-v8a,x86_64` 且 `RELEASE=1`，
 **必须一次列全**——每次构建会清空 `jniLibs`，多次跑不同架构不会累积。
+
+桌面发行包（AUR `anki-plus-bin`）走另一条线，见 `04-Anki-Dev-PKGBUILD/README.md`：
+
+```bash
+cd 01-Anki-Dev && rm -f out/build.ninja && RELEASE=2 just wheels
+```
+
+那个 `rm` 不能省。构建 profile 在 configure 阶段就烘进了 `out/build.ninja`，
+而 ninja 不把环境变量当输入。只设 `RELEASE=2` 会让 `out/env` 变化触发重编译，
+但仍按旧 profile 编，产物落进 `out/rust/debug/` 而不是 `release-lto/`，
+**且构建照样报成功**。`04` 的打包脚本有体积检查专门拦这个。
 
 ## 文档
 

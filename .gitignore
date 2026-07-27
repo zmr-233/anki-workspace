@@ -9,3 +9,5 @@ TEMP/
 .DS_Store
 *.swp
 *~
+
+ref/**
