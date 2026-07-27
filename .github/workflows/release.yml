@@ -38,6 +38,7 @@ jobs:
   meta:
     name: 版本号
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.d.outputs.version }}
       tag: ${{ steps.d.outputs.tag }}
@@ -77,6 +78,7 @@ jobs:
     name: 桌面 wheels + tarball
     needs: meta
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
@@ -124,6 +126,7 @@ jobs:
     name: rsdroid AAR
     needs: meta
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
@@ -150,7 +153,9 @@ jobs:
                 03-Anki-Android-Backend-Dev/gradle/libs.versions.toml)
           [[ -n $ndk ]] || { echo "::error::libs.versions.toml 里读不到 ndk"; exit 1; }
           echo "NDK $ndk"
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk"
+          # yes | 不能省：许可没预先接受时 sdkmanager 会停在 "Accept? (y/N)" 等输入，
+          # 而 CI 没有 tty，那就是一个跑到 job 超时的静默挂死
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk"
 
       - name: 构建 AAR
         working-directory: 03-Anki-Android-Backend-Dev
@@ -181,6 +186,7 @@ jobs:
     name: APK（暂用 fallback key）
     needs: [meta, backend]
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -231,6 +237,7 @@ jobs:
     name: 用发行 key 重签
     needs: [meta, android]
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     # 密钥绑在这个 environment 上。目前没有 protection rule；想让每次发版都要人
     # 点一下确认，在仓库设置里给它加 required reviewer 即可，workflow 不用改。
     environment: android-signing
@@ -309,6 +316,7 @@ jobs:
     needs: [meta, desktop, sign]
     if: needs.meta.outputs.publish == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
