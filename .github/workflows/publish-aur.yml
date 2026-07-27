@@ -3,8 +3,9 @@ name: publish-aur
 # release 发布后，把 04-Anki-Dev-PKGBUILD 的 PKGBUILD 推到 AUR。
 #
 # 这个 job 是整条流水线里唯一持有长期密钥的地方，所以刻意做窄：
-#   * 只在 release published / 手工 dispatch 时跑，绝不在 pull_request 上跑
-#   * permissions: {} —— 不需要 GITHUB_TOKEN 的任何权限
+#   * 只在 release published / 手工 dispatch / release.yml 调用时跑，
+#     绝不在 pull_request 上跑
+#   * GITHUB_TOKEN 只有 contents: read —— checkout 需要它，别的都不要
 #   * environment: aur —— secret 绑在这个 environment 上，可以在仓库设置里
 #     给它加 required reviewer，让每次触碰密钥都要人点一下
 #   * known_hosts 硬编码，不用 ssh-keyscan（那是 TOFU，CI 里等于没有校验）
@@ -12,7 +13,18 @@ name: publish-aur
 # 密钥是 AUR 专用的 ed25519，与本地 main_rsa 分离。它仍然能推该 AUR 账号维护的
 # 所有包；要把范围压到单个包，得另开一个 AUR 账号做 co-maintainer。
 
+# 三个入口：
+#   workflow_call    ← release.yml 走这条。GITHUB_TOKEN 创建的 release 不会触发
+#                      下面那个 release 触发器，所以自动流水线必须显式调用。
+#   release          ← 只服务手工发的 release
+#   workflow_dispatch← 补推/重推某个已有的 release
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "release tag，例如 v26.05.1"
+        required: true
+        type: string
   release:
     types: [published]
   workflow_dispatch:
@@ -21,7 +33,8 @@ on:
         description: "release tag，例如 v26.05.1"
         required: true
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   publish:

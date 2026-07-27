@@ -56,6 +56,46 @@ cd 01-Anki-Dev && rm -f out/build.ninja && RELEASE=2 just wheels
 但仍按旧 profile 编，产物落进 `out/rust/debug/` 而不是 `release-lto/`，
 **且构建照样报成功**。`04` 的打包脚本有体积检查专门拦这个。
 
+## 发版
+
+一个 tag 同时发桌面包和 APK，两者共用一条版本流：
+
+```bash
+git tag v26.05.2 && git push origin v26.05.2
+```
+
+```
+meta ─┬──────────────────→ desktop(wheels→tarball) ─┐
+      └→ backend(AAR) → android(APK) → sign ────────┴→ publish(release) → aur
+```
+
+| 产物 | 名字 | 去处 |
+|---|---|---|
+| 桌面 x86_64 | `anki-plus-bin-26.05.2-x86_64.tar.zst` | release → AUR `anki-plus-bin` |
+| Android arm64 | `AnkiPlus-26.05.2-arm64-v8a.apk` | release → Obtainium |
+
+版本号 `26.05.2` = `<上游 anki 版本>.<plus 序号>`。APK 的 versionName 用同一个，
+versionCode 是 `26050200`。**每段限 1-2 位**：AnkiDroid 还要在第 9 位叠 ABI 乘数
+（`abi * 100000000`），而上限是 2100000000。
+
+调试用 `workflow_dispatch` 且不勾 publish —— 跑完构建和签名，产物留在 artifacts，
+不发 release、不碰 AUR：
+
+```bash
+gh workflow run release.yml -f version=26.05.2
+```
+
+APK 的 applicationId 是 `com.ichi2.anki.plus`（靠上游自带的 `-PcustomSuffix`）。
+manifest 里所有 provider authority 和自定义权限都是 `${applicationId}` 派生的，
+所以能和商店版 AnkiDroid 并存、数据互不可见。
+
+⚠️ gradle 打出来的 release APK 默认用仓库里 `tools/fallback-release-keystore.jks` 签，
+那是一把**公开**密钥（`CN=Sahil Ahmad`），谁都能用它签出「AnkiDroid release」。
+`sign` job 用 `~/.keystores/anki-plus-release.jks` 整体换掉：`apksigner sign` 会删掉旧的
+`META-INF/*.SF/.RSA`，而签名块插在最后一个条目之后、中央目录之前，条目偏移不变，
+所以 16 K 页对齐不受影响。发行证书 SHA-256 `5EF6AB43…88CB533D`，
+**它没有吊销机制，换掉等于抛弃所有已装用户的升级路径**。
+
 ## 文档
 
 | 目录 | 内容 |
