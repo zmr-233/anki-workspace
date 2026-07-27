@@ -159,8 +159,14 @@ remote：`git@github.com:zmr-233/anki-workspace.git`。
 
 - 依赖链串行三段 → job 形状：`build-desktop(01)` → `build-rsdroid(03)` → `build-ankidroid(02)`，
   另有 `publish-aur`(needs 01) 和汇总的 `release`
-- **磁盘是首要风险**：`01` 单独就占 13G（`out/` 8.5G + `target/` 3.6G），
-  GH 标准 runner 空闲约 14G，大概率爆盘。需先删 runner 预装的 SDK，或用大 runner
+- **磁盘是首要风险，但风险在产物不在 checkout**：
+  `git clone --recurse-submodules --depth 1 --shallow-submodules` 实测只有 **159 MB**；
+  撑爆盘的是构建产物 —— 本地 `out/` 8.5G + `target/` 3.6G。GH 标准 runner 空闲约 14G，
+  仍需先删 runner 预装的 SDK 或用大 runner，但不必为 checkout 发愁
+- **仓库是公开的，CI 不需要 PAT**：已用清空凭据的环境（`GIT_SSH_COMMAND=/bin/false`
+  `GIT_TERMINAL_PROMPT=0`）实测匿名 https 递归克隆成功，一路解析到 anki 自己的
+  4 个 submodule。克隆出来的树里 `01-Anki-Dev` symlink 正确还原、
+  `03/anki/rslib/Cargo.toml` 存在、`env.secret` 不在库中
 - 日常只建 `arm64-v8a`（已有 `ANDROID_ARCHS`），打 tag 才建 4 ABI + `RELEASE=1`
 - **AUR 不托管构建产物**，只托管 PKGBUILD。04 的 action 是「生成 PKGBUILD →
   push 到 `ssh://aur@aur.archlinux.org/…`」，需要 AUR SSH deploy key 进 secrets。
