@@ -66,37 +66,59 @@
 
 ## 3. 待办
 
-### 3.1 发 release（唯一的即时阻塞）
+### 3.1 首次推 AUR（已完成）
 
-`TEMP/anki-plus-bin-26.05.1-x86_64.tar.zst` 已就绪，sha256
-`28b030ff71b2d0347a9472311dd5d00596626b04a0fd1dc466914d14d19b82a5`。
-PKGBUILD 的 `source` 指向本仓库的 release `v26.05.1`，**该 release 还没建**。
+Release [`v26.05.1`](https://github.com/zmr-233/anki-workspace/releases/tag/v26.05.1) 已发，
+并且删掉本地 tarball 重跑 `makepkg` 验证过：从真实 release URL 下载、sha256 校验通过。
 
-本机 `gh` 登录的是 `Paradox-Craft`，对 `zmr-233/anki-workspace` 只有读权限
-（`{"push":false}`），所以 release 得由用户建，或换账号登录 `gh`。
+AUR 包已上线：<https://aur.archlinux.org/packages/anki-plus-bin>（`26.05.1-1`，
+commit `1ac27d0`）。以后出新版就是 tag → release → `publish-aur` workflow 自动推。
 
-### 3.2 CI（尚未开工）
+⚠️ AUR 的 SSH Public Key 字段是**整体替换**语义：表单预填了现有的 key，要加 key 得
+**追加一行**；清空后只粘新 key 会把其他 key 删掉。
+
+### 3.2 密钥布置（已完成）
+
+| 项 | 状态 |
+|---|---|
+| `~/.ssh/aur_ed25519` | 已生成，无密码（CI 用），仅 AUR |
+| `~/.ssh/config` 的 `Host aur.archlinux.org` 段 | 已加，`IdentitiesOnly yes`。原 config 备份为 `config.bak-20260727` |
+| GH environment `aur` + secret `AUR_SSH_KEY` | 已建 |
+| `.github/workflows/publish-aur.yml` | 已写，`release: published` 触发 |
+
+之前 AUR 访问挂在 `main_rsa` 上，而那把 key 同时用于 GitHub + 6 台服务器 + `local`。
+现已分离。**但仍未按包隔离**：AUR 的 key 只认证账号，授权按 maintainer 身份走，
+所以这把 key 能推该账号维护的所有包（含 `yesplaymusic-plus`）。要压到单包，
+只能另开一个 AUR 账号做 co-maintainer——AUR 没有 token / deploy key 机制
+（aurweb!895 在做，未合并）。
+
+`aur` environment 目前没有 protection rule。加一个 required reviewer 就能让每次
+触碰密钥都要人点一下，代价是每次 release 多一步审批。**尚未决定**。
+
+### 3.3 CI 其余部分（尚未开工）
 
 ```
 build-desktop(anki) → 打 tarball → release      ← 这条已手工跑通，照抄即可
 build-rsdroid(03)   → build-ankidroid(02) → release
-release 完成         → publish-aur（04 的 publish_script.sh）
+release published   → publish-aur              ← 已写
 ```
 
 - 桌面这条**不需要 Arch 容器**：anki 自带的 ninja 会自己拉 node/yarn/protoc/uv，
   `ubuntu-24.04` 上 `RELEASE=2 just wheels` 就够。产物 abi3 + 静态链接，装到 Arch 上没问题
+- 但 `publish-aur` **需要** Arch 容器：`makepkg --printsrcinfo` 是唯一的 Arch 专有步骤，
+  且它**拒绝以 root 运行**（实测），容器里默认是 root，所以要建个 builder 用户跑，
+  再让 `publish_script.sh` 带 `SKIP_SRCINFO=1` 跳过重复生成
 - 磁盘风险在产物不在 checkout：本地 `out/` 11 G。GH 标准 runner 空闲约 14 G，
   需先删预装 SDK 或用大 runner
-- AUR 推送要把 AUR SSH deploy key 放进 secrets
 - `02` 靠 `local_backend_path` 找同级的 `03`，**只有 workspace 一起 checkout 时才成立**
 
-### 3.3 分支策略（尚未决定）
+### 3.4 分支策略（尚未决定）
 
 同时要做「向 upstream 提 PR」和「维护 plus 发行版」：PR 要干净地 rebase 在 upstream main 上，
 发行版要长期分支。**目前四个仓库全在 `main`**。既然包名定为 `anki-plus`（后续还会加时区以外
 的功能），fork 里建议分成 `dist/plus` 长期分支 + 每个特性一条 `pr/*`。
 
-### 3.4 功能缺口
+### 3.5 功能缺口
 
 | 项 | 说明 | 优先级 |
 |---|---|---|
@@ -105,7 +127,7 @@ release 完成         → publish-aur（04 的 publish_script.sh）
 | 字符串只有英文 | 新增的 3 条 AnkiDroid 字符串未翻译 | 中 |
 | 首次启用的 ±1 天跳变无提示 | 见设计文档 §4 | 中 |
 
-### 3.5 可单独上游的改动
+### 3.6 可单独上游的改动
 
 `03/build_rust` 的 `ANDROID_ARCHS` 与时区功能无关，可单独提 upstream PR。
 
