@@ -12,8 +12,8 @@
 | 仓库 | remote | HEAD |
 |---|---|---|
 | `03-…/anki`（= `01-Anki-Dev`） | `zmr-233/anki-dev` | `baf44f633` |
-| `02-AnkiDroid-Dev` | `zmr-233/ankidroid-dev` | `2e40605` |
-| `03-Anki-Android-Backend-Dev` | `zmr-233/ankidroid-backend-dev` | `2696561` |
+| `02-AnkiDroid-Dev` | `zmr-233/ankidroid-dev` | `849fbd8` |
+| `03-Anki-Android-Backend-Dev` | `zmr-233/ankidroid-backend-dev` | `3e0d66d` |
 | workspace | `zmr-233/anki-workspace` | 见 `git log` |
 
 **构建实测**：`just check` 40s 全绿（Rust / Python 82 passed + 2 skipped / TS 51 passed /
@@ -98,12 +98,20 @@ applicationId `com.ichi2.anki.plus`，只出 arm64-v8a。**已在本机构建验
 `sign` job 会断言这个指纹，secret 被换掉会在 CI 里失败，而不是等用户装不上。
 **这把 key 没有吊销机制**：泄露后只能换 applicationId 重新发布，所有已装用户断掉升级路径。
 
-⚠️ **崩溃报告目前会发往上游的服务器**。`AcraCrashReporter.kt:168` 对非 debug 构建走
-`setProductionACRAConfig`，而 `ACRA_URL` 是 `defaultConfig` 里写死的
-`https://ankidroid.org/acra/report`，`HttpSenderConfigurationBuilder` 无条件 `withEnabled(true)`。
-上报模式默认 `FEEDBACK_REPORT_ASK`——崩溃时弹窗，用户点「报告」就把 stack trace +
-`LOGCAT` + `SHARED_PREFERENCES` PUT 到那里。上游会收到一批 versionName `26.05.2` 的报告，
-而那个版本号在他们 2.x 的体系里毫无意义。修法见 3.4。
+**崩溃上报已掐断**（原先 `ACRA_URL` 写死上游的 `https://ankidroid.org/acra/report`，
+`HttpSender` 还是无条件 `withEnabled(true)`，用户点「报告」就把 stack trace + `LOGCAT` +
+`SHARED_PREFERENCES` PUT 过去）。现在 `plusVersion` 存在时该 URL 置空，空 URL 被当作
+「上报整个关掉」而不是「开着但发不出去」——后者会留下一个点了没反应的对话框。
+
+空串而非 `null` 是有讲究的：`HttpSenderConfigurationBuilder.build()` 在看 `enabled`
+**之前**先 null 检查 `uri`，传 `null` 会在 ACRA 初始化时抛
+`IllegalStateException("uri must be assigned.")`，应用直接起不来（已在 5.13.1 字节码里核实）。
+
+实机验过：release APK 装得上、起得来、进程存活、logcat 无 ACRA 异常；
+`grep classes*.dex` 里上游端点命中 **0**（对照：`ankiweb.net` 5 次、ACRA 自己的
+`uri must be assigned` 1 次，证明搜索有效）。不带 `-PplusVersion` 构建仍是上游 URL。
+
+遗留小瑕疵：设置里的「错误报告」项仍然可见，但已经不起作用。
 
 顺带一条**不是问题的差异**：`ANALYTICS_API_KEY` 在 CI 里取不到，回落到 `DUMMY_API_XXX`，
 被 GA 的 ingest 拒收，所以 plus 包不发遥测。这是想要的行为。
@@ -127,7 +135,6 @@ GITHUB_TOKEN 创建的 release **不会触发其他 workflow**（GitHub 的防�
 | 项 | 说明 |
 |---|---|
 | 真发版：`git tag v26.05.2 && git push origin v26.05.2` | 会同时更新 AUR 到 26.05.2 并发出第一个 APK |
-| 发之前是否先修 3.4 的崩溃上报 | 一旦 APK 发出去，装了的人崩溃时点「报告」就会给上游发。修完再发就不会有历史包袱 |
 | Obtainium 订阅 `https://github.com/zmr-233/anki-workspace` | 首次发版之后 |
 
 ### 3.2 密钥布置
@@ -136,8 +143,7 @@ GITHUB_TOKEN 创建的 release **不会触发其他 workflow**（GitHub 的防�
 |---|---|
 | `~/.ssh/aur_ed25519` + `Host aur.archlinux.org` 段（`IdentitiesOnly yes`） | 已建。原 ssh config 备份为 `config.bak-20260727` |
 | GH environment `aur` + secret `AUR_SSH_KEY` | 已建 |
-| GH environment `android-signing` + secret `ANDROID_KEYSTORE_BASE64` | 已建 |
-| secret `ANDROID_KEYSTORE_PASSWORD` | **未设**，见 3.1 |
+| GH environment `android-signing` + secret `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` | 已建 |
 
 之前 AUR 访问挂在 `main_rsa` 上，而那把 key 同时用于 GitHub + 6 台服务器 + `local`。
 现已分离。**但仍未按包隔离**：AUR 的 key 只认证账号，授权按 maintainer 身份走，
@@ -193,29 +199,19 @@ Android SDK；`03` 侧靠 `SKIP_ROBOLECTRIC=1` 省掉宿主机那份 target。
 3 和 4 都是「把 workflow 里的 `run:` 原文抽出来在本机跑」才暴露的，照着抄一遍近似脚本
 发现不了。
 
-### 3.4 掐断发往上游的崩溃上报（未做）
-
-最小改法，和 `plusVersion` 一样由构建参数驱动，不影响上游合并：
-
-- `AnkiDroid/build.gradle`：`plusVersion` 存在时 `buildConfigField "String", "ACRA_URL", '""'`
-- `AcraCrashReporter.kt`：`ACRA_URL` 为空则不挂 `HttpSender`（对话框和 toast 可以留，
-  或者干脆把上报模式默认值改成 `FEEDBACK_REPORT_NEVER`）
-
-要改 App 行为、要真机验一次崩溃路径，所以没在配 CI 的时候顺手做。
-
-### 3.5 arm64 桌面包（未做）
+### 3.4 arm64 桌面包（未做）
 
 PKGBUILD 已用 `$CARCH` / `source_x86_64` 预埋，上游 `build/configure/src/python.rs:163`
 也已支持 `manylinux_2_35_aarch64`。要做的是给 `release.yml` 加一个
 `runs-on: ubuntu-24.04-arm` 的 desktop job，并把 `prepare.py` 里写死的 `ARCH` 常量解耦。
 
-### 3.6 分支策略（尚未决定）
+### 3.5 分支策略（尚未决定）
 
 同时要做「向 upstream 提 PR」和「维护 plus 发行版」：PR 要干净地 rebase 在 upstream main 上，
 发行版要长期分支。**目前四个仓库全在 `main`**。既然包名定为 `anki-plus`（后续还会加时区以外
 的功能），fork 里建议分成 `dist/plus` 长期分支 + 每个特性一条 `pr/*`。
 
-### 3.7 功能缺口
+### 3.6 功能缺口
 
 | 项 | 说明 | 优先级 |
 |---|---|---|
@@ -224,7 +220,7 @@ PKGBUILD 已用 `$CARCH` / `source_x86_64` 预埋，上游 `build/configure/src/
 | 字符串只有英文 | 新增的 3 条 AnkiDroid 字符串未翻译 | 中 |
 | 首次启用的 ±1 天跳变无提示 | 见设计文档 §4 | 中 |
 
-### 3.8 可单独上游的改动
+### 3.7 可单独上游的改动
 
 `03/build_rust` 里这两个都和时区功能无关，可各自提 upstream PR：
 
@@ -258,7 +254,10 @@ AnkiWeb 的下载响应没有。**已确认与时区改动无关**（diff 在 `r
   要在本机复现这个布局：`git worktree add` 出来的树，`.git` 同样是文件
 - `env.secret` 里的 AnkiWeb 测试账号存着 TZ Test 集合（非真实数据），
   `schedTimezone=Asia/Shanghai` + `rolloverMinute=30`
-- 真机装着 `com.ichi2.anki.debug`，时区已恢复 Asia/Shanghai、自动时区已重新打开。
-  发行包是 `com.ichi2.anki.plus`，和它、和商店版都能并存
+- 真机（Find N6）目前**没装任何 `com.ichi2.anki*`**。时区已恢复 Asia/Shanghai、
+  自动时区已重新打开。发行包是 `com.ichi2.anki.plus`，和 debug 版、和商店版都能并存
+- ⚠️ **不要把本机构建的 release APK 装到要长期用的机器上**：它是仓库自带的
+  fallback key 签的，而正式 release 是你那把。Android 不允许跨签名密钥升级，
+  留着它以后装正式版会 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`，只能先卸载丢数据
 - 复现测试数据的脚本**还没固化**，关键点记在调试手册 §7。
   建议下次固化成 `scripts/make-tz-test-collection.py`
