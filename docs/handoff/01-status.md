@@ -98,6 +98,16 @@ applicationId `com.ichi2.anki.plus`，只出 arm64-v8a。**已在本机构建验
 `sign` job 会断言这个指纹，secret 被换掉会在 CI 里失败，而不是等用户装不上。
 **这把 key 没有吊销机制**：泄露后只能换 applicationId 重新发布，所有已装用户断掉升级路径。
 
+⚠️ **崩溃报告目前会发往上游的服务器**。`AcraCrashReporter.kt:168` 对非 debug 构建走
+`setProductionACRAConfig`，而 `ACRA_URL` 是 `defaultConfig` 里写死的
+`https://ankidroid.org/acra/report`，`HttpSenderConfigurationBuilder` 无条件 `withEnabled(true)`。
+上报模式默认 `FEEDBACK_REPORT_ASK`——崩溃时弹窗，用户点「报告」就把 stack trace +
+`LOGCAT` + `SHARED_PREFERENCES` PUT 到那里。上游会收到一批 versionName `26.05.2` 的报告，
+而那个版本号在他们 2.x 的体系里毫无意义。修法见 3.4。
+
+顺带一条**不是问题的差异**：`ANALYTICS_API_KEY` 在 CI 里取不到，回落到 `DUMMY_API_XXX`，
+被 GA 的 ingest 拒收，所以 plus 包不发遥测。这是想要的行为。
+
 ### 2.3 为什么 AUR 那一步是 `workflow_call` 而不是 `release: published`
 
 GITHUB_TOKEN 创建的 release **不会触发其他 workflow**（GitHub 的防循环规则）。
@@ -114,8 +124,9 @@ GITHUB_TOKEN 创建的 release **不会触发其他 workflow**（GitHub 的防�
 
 | 项 | 谁做 |
 |---|---|
-| `gh secret set ANDROID_KEYSTORE_PASSWORD --env android-signing --repo zmr-233/anki-workspace` | **只能你做**，我没有这个密码 |
-| 首次 dry run：`gh workflow run release.yml -f version=26.05.2` | 密码设好之后 |
+| `gh secret set ANDROID_KEYSTORE_PASSWORD --env android-signing --repo zmr-233/anki-workspace` | **只能你做**，我没有这个密码。这是唯一挡着流水线跑通的东西 |
+| 再跑一次 dry run 确认 `sign` 也过：`gh workflow run release.yml -f version=26.05.2` | 密码设好之后 |
+| 真发版：`git tag v26.05.2 && git push origin v26.05.2` | 确认之后 |
 | Obtainium 订阅 `https://github.com/zmr-233/anki-workspace` | 你，首次发版之后 |
 
 ### 3.2 密钥布置
@@ -136,32 +147,68 @@ GITHUB_TOKEN 创建的 release **不会触发其他 workflow**（GitHub 的防�
 两个 environment 目前都没有 protection rule，发版全自动、零人工介入。想让每次触碰密钥
 都要人点一下，在仓库设置里给对应 environment 加 required reviewer 即可，workflow 不用改。
 
-### 3.3 CI 里从未实跑过的部分
+### 3.3 CI 的验证程度
 
-`release.yml` 和 `publish-aur.yml` 都过了 `actionlint` + `shellcheck`，每一步的命令也都
-在本机跑通过，**但整条 workflow 一次都没在 runner 上跑过**。第一次 dry run 大概率要修
-一两处。已知的不确定点：
+两个 workflow 都过 `actionlint` + `shellcheck`。六个 job 的 `run:` 脚本都在本机
+**按原文**跑过一遍（从 YAML 里抽出来执行，不是照着抄一遍近似的）：`sign` 用一次性
+keystore 跑完四条断言，并做了反例验证（换 key、versionName 不符都被拦下）；
+`publish` 用 `gh` 桩跑通 notes 生成和 `release create` 的参数。
 
-| 不确定点 | 目前的兜底 |
-|---|---|
-| runner 磁盘。本机 `anki/out` 12 G（含 debug + release + release-lto 三份 rust target），干净构建单 profile 约 2.7 G；android 那条另加 `03/target` 2.3 G | 各 job 先删 dotnet / ghc / boost / swift；desktop job 还删预装的 Android SDK。`03` 侧靠 `SKIP_ROBOLECTRIC=1` 省掉宿主机那份 target |
-| `publish-aur.yml` 原来是 `permissions: {}`，那样 `actions/checkout` 的 token 没有 contents 权限，即使公开仓库也可能 403。已改 `contents: read`，并在 `release.yml` 的 `aur` job 显式放开（被调 workflow 的权限不能超过调用方） | dry run 跑不到 aur，要单独 `gh workflow run publish-aur.yml -f tag=v26.05.1` 验（重推同样内容是 no-op） |
-| `bsdtar` 是否预装。`make-release-tarball.sh` 用它拆 wheel 做自检 | desktop job 显式 `apt-get install libarchive-tools zstd` |
-| gradle 缓存冷启动耗时。本机热缓存 4m20s，冷的没测过 | `actions/setup-java` 的 `cache: gradle` |
+runner 上的实跑结果（run 30277594516，dry run，总墙钟 25m23s；desktop 和 backend 并行）：
 
-### 3.4 arm64 桌面包（未做）
+| job | 结果 | 耗时 |
+|---|---|---|
+| 版本号 | ✅ | 4s |
+| 桌面 wheels + tarball | ✅ 产物已下载核对：`pkgver=26.05.2` / `srcref` 对得上本地 anki HEAD | 8m34s（冷构建 wheels 7m41s） |
+| rsdroid AAR | ✅ `AAR jniLibs: arm64-v8a` 断言通过 | 13m31s |
+| APK | ✅ 产物已下载核对：`com.ichi2.anki.plus` / `326050200` / `26.05.2` / `Anki+` / 仅 arm64 | 11m16s |
+| 重签 | ❌ 只因缺 `ANDROID_KEYSTORE_PASSWORD`（`keystore password was incorrect`）。keystore 的 base64 是好的——它已经走到验密码那一步 | — |
+| 发 release / 推 AUR | ❌ dry run 不跑这两个 | — |
+
+磁盘没成为问题：各 job 先删 dotnet / ghc / boost / swift，desktop 还删预装的
+Android SDK；`03` 侧靠 `SKIP_ROBOLECTRIC=1` 省掉宿主机那份 target。
+
+runner 上的 build-tools 是 **37.0.0**，正是下面第 3 条里改了输出措辞的那个版本。
+
+**`publish-aur.yml` 仍未在 runner 上跑过一次**。它原来写的是 `permissions: {}`，
+那样 `actions/checkout` 的 token 没有 contents 权限——它是带认证的、不会退回匿名，
+公开仓库也可能 403。已改 `contents: read`，并在 `release.yml` 的 `aur` job 显式放开
+（被调 workflow 的权限不能超过调用方）。要单独验：
+`gh workflow run publish-aur.yml -f tag=v26.05.1`，重推同样内容是 no-op。
+
+第一次跑出来的两个 bug 都不是配置疏忽，值得记住：
+
+1. **`installGitHook`**——见 §5 的 `.git` 那条。本机结构性地验不出来。
+2. **`yes | sdkmanager`**——我为防挂死加的，反而制造了失败：sdkmanager 许可已接受时
+   不读 stdin，`yes` 吃 EPIPE 退出非零，`pipefail` 判整步失败。改成 here-string
+   （有界输入，不挂死也不 broken pipe，退出码是 sdkmanager 自己的）。
+3. 另有一个只在本机模拟时才发现的：`apksigner --print-certs` 的措辞在 build-tools
+   36 和 37 之间变了（`Signer #1 certificate …` → `V3.0 Signer: certificate …`），
+   而 job 取的是镜像里最新那个版本。已改成版本无关的匹配，并额外要求签名者唯一。
+
+### 3.4 掐断发往上游的崩溃上报（未做）
+
+最小改法，和 `plusVersion` 一样由构建参数驱动，不影响上游合并：
+
+- `AnkiDroid/build.gradle`：`plusVersion` 存在时 `buildConfigField "String", "ACRA_URL", '""'`
+- `AcraCrashReporter.kt`：`ACRA_URL` 为空则不挂 `HttpSender`（对话框和 toast 可以留，
+  或者干脆把上报模式默认值改成 `FEEDBACK_REPORT_NEVER`）
+
+要改 App 行为、要真机验一次崩溃路径，所以没在配 CI 的时候顺手做。
+
+### 3.5 arm64 桌面包（未做）
 
 PKGBUILD 已用 `$CARCH` / `source_x86_64` 预埋，上游 `build/configure/src/python.rs:163`
 也已支持 `manylinux_2_35_aarch64`。要做的是给 `release.yml` 加一个
 `runs-on: ubuntu-24.04-arm` 的 desktop job，并把 `prepare.py` 里写死的 `ARCH` 常量解耦。
 
-### 3.5 分支策略（尚未决定）
+### 3.6 分支策略（尚未决定）
 
 同时要做「向 upstream 提 PR」和「维护 plus 发行版」：PR 要干净地 rebase 在 upstream main 上，
 发行版要长期分支。**目前四个仓库全在 `main`**。既然包名定为 `anki-plus`（后续还会加时区以外
 的功能），fork 里建议分成 `dist/plus` 长期分支 + 每个特性一条 `pr/*`。
 
-### 3.6 功能缺口
+### 3.7 功能缺口
 
 | 项 | 说明 | 优先级 |
 |---|---|---|
@@ -170,7 +217,7 @@ PKGBUILD 已用 `$CARCH` / `source_x86_64` 预埋，上游 `build/configure/src/
 | 字符串只有英文 | 新增的 3 条 AnkiDroid 字符串未翻译 | 中 |
 | 首次启用的 ±1 天跳变无提示 | 见设计文档 §4 | 中 |
 
-### 3.7 可单独上游的改动
+### 3.8 可单独上游的改动
 
 `03/build_rust` 里这两个都和时区功能无关，可各自提 upstream PR：
 
@@ -195,6 +242,13 @@ AnkiWeb 的下载响应没有。**已确认与时区改动无关**（diff 在 `r
 
 ## 5. 环境注意
 
+- ⚠️ **本机两个 submodule 的 `.git` 是真目录，不是 gitlink 文件**。它们当初是独立
+  clone 后接进来的，而 `git clone --recurse-submodules`（CI 走的那条）产生的是**文件**。
+  于是任何「把 `.git` 当目录去碰」的代码都是本机好好的、CI 必炸，而且本机怎么试都试不出来。
+  `03/rsdroid/build.gradle` 的 `installGitHook` 就是这么漏到第一次 CI 才暴露的
+  （`Copy` 的 `destinationDir` 落在 `.git/hooks`，`preBuild` 依赖它，等于
+  `clone --recurse-submodules && ./build.sh` 从来就跑不通）。
+  要在本机复现这个布局：`git worktree add` 出来的树，`.git` 同样是文件
 - `env.secret` 里的 AnkiWeb 测试账号存着 TZ Test 集合（非真实数据），
   `schedTimezone=Asia/Shanghai` + `rolloverMinute=30`
 - 真机装着 `com.ichi2.anki.debug`，时区已恢复 Asia/Shanghai、自动时区已重新打开。
