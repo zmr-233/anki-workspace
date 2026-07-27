@@ -12,7 +12,7 @@
 | 仓库 | remote | HEAD |
 |---|---|---|
 | `03-…/anki`（= `01-Anki-Dev`） | `zmr-233/anki-dev` | `baf44f633` |
-| `02-AnkiDroid-Dev` | `zmr-233/ankidroid-dev` | `849fbd8` |
+| `02-AnkiDroid-Dev` | `zmr-233/ankidroid-dev` | `c7f5cd1` |
 | `03-Anki-Android-Backend-Dev` | `zmr-233/ankidroid-backend-dev` | `3e0d66d` |
 | workspace | `zmr-233/anki-workspace` | 见 `git log` |
 
@@ -217,10 +217,21 @@ PKGBUILD 已用 `$CARCH` / `source_x86_64` 预埋，上游 `build/configure/src/
 |---|---|---|
 | **时区选择器难用** | `ZoneId.getAvailableZoneIds()` 全量约 600 项、无搜索框，桌面侧同样是全量下拉 | **高**（唯一的实测可用性问题） |
 | **AnkiDroid 侧无测试** | `setDayOffsetMinute()` / `setSchedulingTimezone()` 挂着 `@NeedsTest` 但没写 | **高**（提 PR 必须） |
-| 字符串只有英文 | 新增的 3 条 AnkiDroid 字符串未翻译 | 中 |
+| 桌面那 3 条字符串没有 zh-CN | AnkiDroid 侧已翻（`values-zh-rCN/10-preferences.xml`，术语用「调度」）。桌面侧要改 `ftl/core-repo/core/zh-CN/preferences.ftl`，那是指向 `ankitects/anki-core-i18n` 的 submodule，得先 fork 它——见下 | 低 |
 | 首次启用的 ±1 天跳变无提示 | 见设计文档 §4 | 中 |
 
-### 3.7 可单独上游的改动
+### 3.7 桌面 zh-CN 需要第 5 个仓库（已决定暂不做）
+
+桌面的英文原文在 fork 里（`ftl/core/preferences.ftl`），但翻译在
+`ftl/core-repo/core/zh-CN/`——那是指向 `ankitects/anki-core-i18n` 的 submodule。
+要翻就得 fork 它，工作区多一个仓库，push 顺序变成
+`core-i18n → anki → 03 → 02 → workspace`；而且 zh-CN 是 Pontoon 活跃翻译的语言，
+以后同步上游时这个文件容易冲突。收益只是偏好设置里 3 条字符串。
+
+`rslib/i18n/gather.rs` 里的 `EXTRA_FTL_ROOT` **不能拿来绕开**：它是给移动端客户端用的，
+一旦设置就会**替代**整个 Qt 翻译集，桌面构建会丢掉全部 Qt 界面翻译。
+
+### 3.8 可单独上游的改动
 
 `03/build_rust` 里这两个都和时区功能无关，可各自提 upstream PR：
 
