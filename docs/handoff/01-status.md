@@ -122,12 +122,13 @@ GITHUB_TOKEN 创建的 release **不会触发其他 workflow**（GitHub 的防�
 
 ### 3.1 立即待办
 
-| 项 | 谁做 |
+流水线已全线验证通过（细节见 3.3），没有阻塞项。剩下的是决定：
+
+| 项 | 说明 |
 |---|---|
-| `gh secret set ANDROID_KEYSTORE_PASSWORD --env android-signing --repo zmr-233/anki-workspace` | **只能你做**，我没有这个密码。这是唯一挡着流水线跑通的东西 |
-| 再跑一次 dry run 确认 `sign` 也过：`gh workflow run release.yml -f version=26.05.2` | 密码设好之后 |
-| 真发版：`git tag v26.05.2 && git push origin v26.05.2` | 确认之后 |
-| Obtainium 订阅 `https://github.com/zmr-233/anki-workspace` | 你，首次发版之后 |
+| 真发版：`git tag v26.05.2 && git push origin v26.05.2` | 会同时更新 AUR 到 26.05.2 并发出第一个 APK |
+| 发之前是否先修 3.4 的崩溃上报 | 一旦 APK 发出去，装了的人崩溃时点「报告」就会给上游发。修完再发就不会有历史包袱 |
+| Obtainium 订阅 `https://github.com/zmr-233/anki-workspace` | 首次发版之后 |
 
 ### 3.2 密钥布置
 
@@ -154,37 +155,43 @@ GITHUB_TOKEN 创建的 release **不会触发其他 workflow**（GitHub 的防�
 keystore 跑完四条断言，并做了反例验证（换 key、versionName 不符都被拦下）；
 `publish` 用 `gh` 桩跑通 notes 生成和 `release create` 的参数。
 
-runner 上的实跑结果（run 30277594516，dry run，总墙钟 25m23s；desktop 和 backend 并行）：
+runner 上的实跑结果（`release.yml` dry run = run 30280519555，总墙钟约 26 min，
+desktop 与 backend 并行；`publish-aur.yml` = run 30280991792）：
 
 | job | 结果 | 耗时 |
 |---|---|---|
 | 版本号 | ✅ | 4s |
 | 桌面 wheels + tarball | ✅ 产物已下载核对：`pkgver=26.05.2` / `srcref` 对得上本地 anki HEAD | 8m34s（冷构建 wheels 7m41s） |
 | rsdroid AAR | ✅ `AAR jniLibs: arm64-v8a` 断言通过 | 13m31s |
-| APK | ✅ 产物已下载核对：`com.ichi2.anki.plus` / `326050200` / `26.05.2` / `Anki+` / 仅 arm64 | 11m16s |
-| 重签 | ❌ 只因缺 `ANDROID_KEYSTORE_PASSWORD`（`keystore password was incorrect`）。keystore 的 base64 是好的——它已经走到验密码那一步 | — |
-| 发 release / 推 AUR | ❌ dry run 不跑这两个 | — |
+| APK | ✅ `com.ichi2.anki.plus` / `326050200` / `26.05.2` / `Anki+` / 仅 arm64 | 11m16s |
+| 重签 | ✅ 成品已下载核对：`CN=zmr-233, OU=anki-plus`，SHA-256 与 keystore 一致 | 5s |
+| 发 release | ❌ dry run 不跑（只在本机用 `gh` 桩验过） | — |
+| publish-aur（独立跑） | ✅ 幂等保护生效：CI 重新生成的 PKGBUILD 与手工推的逐字节相同，输出「AUR 上已经是这个版本，无需推送」，AUR 仍停在 `1ac27d0` | 40s |
 
 磁盘没成为问题：各 job 先删 dotnet / ghc / boost / swift，desktop 还删预装的
 Android SDK；`03` 侧靠 `SKIP_ROBOLECTRIC=1` 省掉宿主机那份 target。
 
-runner 上的 build-tools 是 **37.0.0**，正是下面第 3 条里改了输出措辞的那个版本。
+**唯一还没在 runner 上跑过的是 `publish` job**，它要真发版才会第一次执行。
+脚本很短（拼 notes + 一次 `gh release create`），本机用 `gh` 桩验过参数。
 
-**`publish-aur.yml` 仍未在 runner 上跑过一次**。它原来写的是 `permissions: {}`，
-那样 `actions/checkout` 的 token 没有 contents 权限——它是带认证的、不会退回匿名，
-公开仓库也可能 403。已改 `contents: read`，并在 `release.yml` 的 `aur` job 显式放开
-（被调 workflow 的权限不能超过调用方）。要单独验：
-`gh workflow run publish-aur.yml -f tag=v26.05.1`，重推同样内容是 no-op。
+### 一路踩出来的四个坑
 
-第一次跑出来的两个 bug 都不是配置疏忽，值得记住：
+1. **`installGitHook`**（CI 报的）——见 §5 的 `.git` 那条。本机结构性地验不出来。
+2. **`yes | sdkmanager`**（我为防挂死加的，反而制造了失败）——许可已接受时 sdkmanager
+   不读 stdin，`yes` 吃 EPIPE 退出非零，`pipefail` 判整步失败。改成 here-string：
+   有界输入，不挂死也不 broken pipe，退出码是 sdkmanager 自己的。
+3. **`apksigner --print-certs` 的措辞变了**（本机模拟时才发现）——build-tools 36 是
+   `Signer #1 certificate …`，37 是 `V3.0 Signer: certificate …`，而 job 取镜像里
+   最新那个，**runner 上正好是 37.0.0**。已改成版本无关的匹配，并额外要求签名者唯一。
+4. **容器 job 里不能往 `~/.ssh` 写**（`publish-aur` 报的 `Host key verification failed`）。
+   runner 给容器 job 设 `HOME=/github/home`，shell 的 `~` 跟着走；但 OpenSSH 的
+   `tilde_expand_filename()` 走 `getpwuid()`，**完全不看 `HOME`**，root 在这个镜像里是
+   `/root`。文件写进一个 ssh 根本不看的位置。本机可实证：`HOME` 指向不存在的路径时
+   `ssh -G` 仍报 passwd 家目录，而 bash 的 `~` 跟着假 `HOME`。改成 `/etc/aur-ssh`
+   绝对路径 + `GIT_SSH_COMMAND` 显式传参，并写明 `StrictHostKeyChecking=yes`。
 
-1. **`installGitHook`**——见 §5 的 `.git` 那条。本机结构性地验不出来。
-2. **`yes | sdkmanager`**——我为防挂死加的，反而制造了失败：sdkmanager 许可已接受时
-   不读 stdin，`yes` 吃 EPIPE 退出非零，`pipefail` 判整步失败。改成 here-string
-   （有界输入，不挂死也不 broken pipe，退出码是 sdkmanager 自己的）。
-3. 另有一个只在本机模拟时才发现的：`apksigner --print-certs` 的措辞在 build-tools
-   36 和 37 之间变了（`Signer #1 certificate …` → `V3.0 Signer: certificate …`），
-   而 job 取的是镜像里最新那个版本。已改成版本无关的匹配，并额外要求签名者唯一。
+3 和 4 都是「把 workflow 里的 `run:` 原文抽出来在本机跑」才暴露的，照着抄一遍近似脚本
+发现不了。
 
 ### 3.4 掐断发往上游的崩溃上报（未做）
 
